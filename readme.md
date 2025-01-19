@@ -1,0 +1,1 @@
+https://armorgames.com/play/1043/the-worlds-hardest-game
