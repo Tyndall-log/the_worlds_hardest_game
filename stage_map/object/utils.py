@@ -97,6 +97,19 @@ class Point:
 			raise ValueError("다른 Point 객체의 좌표가 유효하지 않습니다.")
 		return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2)
 
+	def interpolate(self, other, ratio):
+		"""두 점 사이를 비율(ratio)로 보간"""
+		return Point(
+			self.x + (other.x - self.x) * ratio,
+			self.y + (other.y - self.y) * ratio,
+		)
+
+	def to_tuple(self) -> tuple[float, float]:
+		return self.x, self.y
+
+	def to_tuple_int(self) -> tuple[int, int]:
+		return int(self.x), int(self.y)
+
 	def __neg__(self) -> "Point":
 		return Point(-self.x, -self.y)
 
@@ -119,12 +132,45 @@ class Point:
 
 
 class EnvData:
-	canvas: np.ndarray  # 캔버스
-	collision_mask: np.ndarray  # 충돌 마스크
+	def __init__(
+		self,
+		canvas: np.ndarray,
+		collision_mask: np.ndarray,
+		frame_per_second: int = 30,
+		current_frame: int = 0
+	):
+		"""
+		:param canvas: 캔버스
+		:param collision_mask: 충돌 마스크
+		:param frame_per_second: 초당 프레임 수
+		:param current_frame: 현재 프레임
+		"""
+		self.canvas = canvas  # 캔버스
+		self.collision_mask = collision_mask  # 충돌 마스크
+		self.frame_per_second = frame_per_second
+		self.current_frame = current_frame
 
-	def __init__(self, canvas: np.ndarray, collision_mask: np.ndarray):
+	def set(
+		self,
+		canvas: np.ndarray,
+		collision_mask: np.ndarray,
+		frame_per_second: int | None = None,
+		current_frame: int | None = None
+	):
+		"""
+		환경 데이터를 초기화합니다.
+		:param canvas: 캔버스
+		:param collision_mask: 충돌 마스크
+		:param frame_per_second: 초당 프레임 수
+		:param current_frame: 현재 프레임
+		:return:
+		"""
 		self.canvas = canvas
 		self.collision_mask = collision_mask
+		if frame_per_second is not None:
+			self.frame_per_second = frame_per_second
+		if current_frame is not None:
+			self.current_frame = current_frame
 
 
 class ObjectManager:

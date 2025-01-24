@@ -15,7 +15,9 @@
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     ],
-    "player_init_pos": [175, 400],
+    "player_info": {
+        "init_pos": [175, 400]
+    },
     "ball_list": [
         {
             "type": "alone",
@@ -24,7 +26,7 @@
                 [788, 326]
             ],
             "path_mode": "bounce",
-            "time": 1.5
+            "time": 1.2
         },
         {
             "type": "alone",
@@ -33,7 +35,7 @@
                 [312, 376]
             ],
             "path_mode": "bounce",
-            "time": 1.5
+            "time": 1.2
         },
         {
             "type": "alone",
@@ -42,7 +44,7 @@
                 [788, 426]
             ],
             "path_mode": "bounce",
-            "time": 1.5
+            "time": 1.2
         },
         {
             "type": "alone",
@@ -51,7 +53,7 @@
                 [312, 476]
             ],
             "path_mode": "bounce",
-            "time": 1.5
+            "time": 1.2
         }
     ]
 }

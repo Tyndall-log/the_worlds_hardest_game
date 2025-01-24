@@ -2,5 +2,6 @@
 .venv
 .DS_Store
 __pycache__
+*.kra
 
-/캡쳐_사진
+/image_source
