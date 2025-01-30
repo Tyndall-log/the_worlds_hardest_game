@@ -29,9 +29,9 @@ class ResidualBlock(nn.Module):
 		return self.relu(out)
 
 
-class ResNet18(nn.Module):
+class ResNet(nn.Module):
 	def __init__(self, input_channels=3):
-		super(ResNet18, self).__init__()
+		super(ResNet, self).__init__()
 		# ResNet18의 각 단계 정의
 		self.initial = nn.Sequential(
 			nn.Conv2d(input_channels, 32, kernel_size=7, stride=2, padding=3, bias=False),
@@ -78,7 +78,7 @@ class PPOModel(nn.Module):
 	def __init__(self, input_channels, action_space, spatial_hidden_size=256, temporal_hidden_size=256):
 		super(PPOModel, self).__init__()
 		# ResNet18으로 공간 특징 추출
-		self.resnet_cnn = ResNet18(input_channels)
+		self.resnet_cnn = ResNet(input_channels)
 
 		# 첫 번째 LSTM: 공간 정보를 시퀀스로 해석
 		self.spatial_lstm = nn.LSTM(256, spatial_hidden_size, batch_first=True)
@@ -120,28 +120,21 @@ class PPOModel(nn.Module):
 				self.static_spatial_hidden[0].to(x.device),
 				self.static_spatial_hidden[1].to(x.device)
 			)
-		sshh = self.static_spatial_hidden[0].detach()
-		sshc = self.static_spatial_hidden[1].detach()
-		# ss = spatial_sequence.cpu().detach().numpy()
-		# ss = torch.tensor(ss, dtype=torch.float32).to(x.device)
-		with torch.no_grad():
-			ss = spatial_sequence.detach().clone()
-			# ss = torch.zeros(batch_size, height * width, 256).to(x.device)
-			spatial_out, _ = self.spatial_lstm(ss)  # (batch_size, H*W, spatial_hidden_size)
+		spatial_out, _ = self.spatial_lstm(spatial_sequence)  # (batch_size, H*W, spatial_hidden_size)
 
 		# 두 번째 LSTM 처리
-		# temporal_out, _ = self.temporal_lstm(spatial_out[:, -1:, :], temporal_hidden)  # (batch_size, H*W, temporal_hidden_size)
-		# _, temporal_hidden = self.temporal_lstm(spatial_out[:, -1:, :].detach(), temporal_hidden)  # Detach ResNet
+		# h, c = temporal_hidden
+		temporal_out, _ = self.temporal_lstm(spatial_out[:, -1:, :], temporal_hidden)  # (batch_size, H*W, temporal_hidden_size)
+		_, temporal_hidden = self.temporal_lstm(spatial_out[:, -1:, :].detach(), temporal_hidden)  # Detach ResNet
 		# temporal_out, temporal_hidden = self.temporal_lstm(spatial_out[:, -1:, :], temporal_hidden)  # (batch_size, H*W, temporal_hidden_size)
 		# temporal_out, temporal_hidden = self.temporal_lstm(spatial_out[:, -1:, :].detach(), temporal_hidden)  # Detach ResNet
 
 		# Actor-Critic Heads
-		# temporal_out = spatial_out.squeeze(1)  # (batch_size, temporal_hidden_size)
-		# policy = self.actor_fc(temporal_out)  # 행동 확률 분포 (batch_size, action_space)
-		# value = self.critic_fc(temporal_out)  # 상태 가치 (batch_size, 1)
+		temporal_out = temporal_out.squeeze(1)  # (batch_size, temporal_hidden_size)
+		policy = self.actor_fc(temporal_out)  # 행동 확률 분포 (batch_size, action_space)
+		value = self.critic_fc(temporal_out)  # 상태 가치 (batch_size, 1)
 
-		return {}, {}, temporal_hidden
-		# return policy, value, temporal_hidden
+		return policy, value, temporal_hidden
 
 	def _init_static_spatial_hidden(self, batch_size):
 		"""
@@ -167,7 +160,7 @@ class PPOModel(nn.Module):
 
 if __name__ == "__main__":
 	# ResNet18 모델 생성 및 파라미터 계산
-	model = ResNet18()
+	model = ResNet()
 	total_params = sum(p.numel() for p in model.parameters())
 	print(f"Total Parameters: {total_params}")
 
@@ -193,8 +186,8 @@ if __name__ == "__main__":
 
 	# 모델 추론 속도 테스트
 	import time
-	model.eval()
-	# model.train()
+	# model.eval()
+	model.train()
 	device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 	model = model.to(device)
 	x = x.to(device)
@@ -202,8 +195,11 @@ if __name__ == "__main__":
 	policy, value, hidden_state = model(x, hidden_state)  # 사전 초기화
 	start_time = time.time()
 	N = 10000
-	for _ in range(N):
-		print(_)
+	for i in range(N):
+		print(i)
 		policy, value, hidden_state = model(x, hidden_state)
+		if (i + 1) % 1000 == 0:
+			torch.mps.empty_cache()
+			hidden_state = hidden_state[0].detach(), hidden_state[1].detach()
 	print(f"Inference Time: {(time.time() - start_time) * 1000 / N:.3f}ms")
 

@@ -8,6 +8,7 @@ class MaskInfo:
 		CHECKPOINT_ZONE = 0b0000_0100
 		LETTERBOX = 0b0000_1000
 		BALL = 0b0001_0000
+		COIN = 0b0010_0000
 
 	def __init__(self, mask_image: np.ndarray):
 		self.mask_image = mask_image

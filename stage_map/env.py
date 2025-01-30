@@ -79,7 +79,7 @@ class Environment(gym.Env):
 
 		# 환경 정보
 		self._env_data = EnvData(self._map_data.background_image.copy(), self._map_data.mask_info.mask_image.copy())
-		self.orign_observation = np.repeat(self._map_data.background_image[np.newaxis, :, :, :], repeats=16, axis=0)
+		self.orign_observation = np.repeat(self._map_data.background_image[np.newaxis, :, :, :], repeats=self.batch_size, axis=0)
 		self._env_data_list = [
 			EnvData(self.orign_observation[i], self._env_data.collision_mask)
 			for i in range(self.batch_size)
@@ -132,8 +132,9 @@ class Environment(gym.Env):
 		self.origin_image_random_crop_resize(self.orign_observation, self.observation)
 
 		# 보상 계산
+		rewards = []
 		for i in range(self.batch_size):
-			rewards[i] = self.player_object_list[i].reward
+			rewards.append(self.player_object_list[i].reward)
 
 		# 종료 여부 (임시로 False로 설정)
 		terminated = np.zeros(self.batch_size, dtype=bool)
@@ -218,7 +219,7 @@ if __name__ == "__main__":
 		else:
 			t1 = time.time()
 			actions = np.random.randint(0, 9, size=player_num)  # 랜덤 행동
-			obs, rewards, dones, infos = env.step(actions)
+			obs, rewards, terminated, truncated, infos = env.step(actions)
 			t2 = time.time()
 			print(f"Step Time(i: {i}): {(t2 - t1) * 1000:.3f}ms")
 			# print(f"Next Observation Shape: {obs.shape}")

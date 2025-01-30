@@ -4,31 +4,11 @@ from stage_map.mask import MaskInfo
 from stage_map.object.utils import Point, Object, EnvData
 
 
-class Ball(Object):
-	path: list[Point]
-	path_distance_list: list[float]
-	path_distance_sum: float
-	path_time: float
-	mask_layer_id: int = MaskInfo.MaskLayer.BALL
+class Coin(Object):
+	mask_layer_id: int = MaskInfo.MaskLayer.COIN
 
 	def __init__(self, data: dict, priority: int = 0):
 		super().__init__(pos=Point(*data["path"][0]), priority=priority)
-		self.path = [Point(*pos) for pos in data["path"]]
-		self.path_distance_list = [self.path[i].distance_to(self.path[i + 1]) for i in range(len(self.path) - 1)]
-		self.path_distance_sum = sum(self.path_distance_list)
-		self.path_time = data["time"]
-		if "path_mode" in data:
-			mode = data["path_mode"]
-			if mode == "standard":
-				pass
-			elif mode == "bounce":
-				self.path += self.path[:-1][::-1]
-				self.path_distance_list += self.path_distance_list[::-1]
-				self.path_distance_sum *= 2
-				self.path_time *= 2
-			else:
-				raise ValueError(f"\"path_mode\"에 알 수 없는 모드입니다.{mode}")
-		# TODO: 공을 그룹화 하고 회전할 수 있는 옵션 추가(그리드 배치 및 회전각(내부 라인 지원) 배치 지원)
 
 	def collision_mask(self, env_data: EnvData) -> None:
 		x1 = int(self.pos.x) - 13

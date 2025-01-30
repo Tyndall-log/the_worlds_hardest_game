@@ -1,9 +1,12 @@
 import sys
 import math
+import time
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.distributions import Categorical
 import gymnasium as gym
 import cv2
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene
@@ -25,9 +28,14 @@ class ReinforcementLearningWorker(QThread):
 		self.running = True  # 루프 제어 변수
 		self.player_num = 16
 		self.fps: int = 30
-		self.env = Environment(batch_size=self.player_num, fps=self.fps)
+		self.env = Environment(
+			map_path=Path(__file__).parent / "stage_map" / "map_file" / "map2.json",
+			batch_size=self.player_num,
+			fps=self.fps
+		)
 		self.env.reset()
-		self.obs = self.env.observation
+		# self.obs = self.env.observation
+		self.obs = torch.tensor(self.env.observation, dtype=torch.float32)
 		self.model = PPOModel(3, 9)
 
 	def run(self):
@@ -37,25 +45,71 @@ class ReinforcementLearningWorker(QThread):
 		model = self.model
 		device = torch.device("mps")
 		model.to(device)
+		self.obs = self.obs.to(device, non_blocking=True)
 		# model.load_state_dict(torch.load("model.pth"))
-		model.eval()
+		# model.eval()
 		hidden_state = model.init_hidden_states(self.player_num)
 		hidden_state = (hidden_state[0].to(device), hidden_state[1].to(device))
+		count = 0
+		# time_stamp_list = []
+		move_time_stamp_list = [float("inf") for _ in range(30)]
+		inference_time_stamp_list = [float("inf") for _ in range(30)]
+		step_time_stamp_list = [float("inf") for _ in range(30)]
+		all_time_stamp_list = [float("inf") for _ in range(30)]
+		# k_time_stamp_list = [float("inf") for _ in range(30)]
+		ramdom_time_stamp_list = [float("inf") for _ in range(30)]
+		stamp_freq = 30
 		while self.running:
+			t_all = time.time()
 			env = self.env
+
 			# 강화학습 알고리즘 실행
-			x = torch.tensor(self.obs, dtype=torch.float32).permute(0, 3, 1, 2)
-			x = x.to(device)
+			k = time.time()
+			t = time.time()
+			# x = torch.tensor(self.obs, dtype=torch.float32).permute(0, 3, 1, 2)
+			# x = x.to(device)
+			x = self.obs.permute(0, 3, 1, 2)
+			move_time_stamp_list[count % stamp_freq] = time.time() - t
+			t = time.time()
 			policy, value, hidden_state = model(x, hidden_state)
-			actions = policy.argmax(dim=1).cpu().numpy()
+			# policy_cpu = policy.cpu()
+			inference_time_stamp_list[count % stamp_freq] = time.time() - t
+
+			# m = Categorical(logits=policy)
+			t = time.time()
+			m = self.fast_categorical_sample(policy)
+			# print(m)
+			ramdom_time_stamp_list[count % stamp_freq] = time.time() - t
+			# actions = m.sample().cpu().numpy()
+			# k_time_stamp_list[count % stamp_freq] = time.time() - k
+			t = time.time()
+			actions = m.cpu().numpy()
+			move_time_stamp_list[count % stamp_freq] += time.time() - t
 
 			# actions = np.random.randint(0, 9, size=self.player_num)  # 랜덤 행동
-			obs, rewards, dones, infos = env.step(actions)
-			self.obs = obs
+			t2 = time.time()
+			obs, rewards, terminated, truncated, infos = env.step(actions)
+			# self.obs = obs
+			self.obs = torch.tensor(obs, dtype=torch.float32).to(device, non_blocking=False)
 			image = env.render()
 
 			# 결과를 GUI로 전달
 			self.update_signal.emit(image)
+			step_time_stamp_list[count % stamp_freq] = time.time() - t2
+
+			# 시간 기록
+			all_time_stamp_list[count % stamp_freq] = time.time() - t_all
+			count += 1
+			if count % stamp_freq == 0:
+				print(f"Step Count: {count}")
+				print(f"Move Time: {np.mean(move_time_stamp_list)*1000:.1f} ms")
+				print(f"Random Time: {np.mean(ramdom_time_stamp_list)*1000:.1f} ms")
+				print(f"Inference Time: {np.mean(inference_time_stamp_list)*1000:.1f} ms")
+				print(f"Step Time: {np.mean(step_time_stamp_list)*1000:.1f} ms")
+				# print(f"k Time: {np.mean(k_time_stamp_list)*1000:.1f} ms")
+				# print(f"tps: {1 / (np.mean(move_time_stamp_list) + np.mean(ramdom_time_stamp_list) + np.mean(step_time_stamp_list) + np.mean(inference_time_stamp_list)):.2f}")
+				print(f"tps: {1 / (np.mean(all_time_stamp_list)):.2f}")
+				torch.mps.empty_cache()
 
 	def stop(self):
 		"""
@@ -64,6 +118,15 @@ class ReinforcementLearningWorker(QThread):
 		self.running = False
 		self.quit()
 		self.wait()
+
+	def fast_categorical_sample(self, logits):
+		# Softmax 변환 (logits → 확률)
+		t = time.time()
+		probs = torch.nn.functional.softmax(logits, dim=-1)
+		# torch.multinomial()을 사용하여 확률 기반 샘플링
+		r = torch.multinomial(probs, 1).squeeze(-1)
+		# print(f"multinomial time: {(time.time() - t) * 1000:.3f}ms")
+		return r
 
 
 class EnvironmentVisualizer(QMainWindow):
