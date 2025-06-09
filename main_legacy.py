@@ -26,11 +26,11 @@ class ReinforcementLearningWorker(QThread):
 	def __init__(self):
 		super().__init__()
 		self.running = True  # 루프 제어 변수
-		self.player_num = 16
+		self.player_num = 1
 		self.fps: int = 30
 		self.env = Environment(
 			map_path=Path(__file__).parent / "stage_map" / "map_file" / "map2.json",
-			batch_size=self.player_num,
+			player_num=self.player_num,
 			fps=self.fps
 		)
 		self.env.reset()

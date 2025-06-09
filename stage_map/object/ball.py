@@ -1,7 +1,8 @@
 import cv2
+import numpy as np
 
 from stage_map.mask import MaskInfo
-from stage_map.object.utils import Point, Object, EnvData
+from stage_map.object.utils import Point, Object, EnvData, ObjectManager
 
 
 class Ball(Object):
@@ -11,8 +12,16 @@ class Ball(Object):
 	path_time: float
 	mask_layer_id: int = MaskInfo.MaskLayer.BALL
 
-	def __init__(self, data: dict, priority: int = 0):
-		super().__init__(pos=Point(*data["path"][0]), priority=priority)
+	def __init__(self,
+		object_manager: ObjectManager,
+		data: dict,
+		priority: int = 0
+	):
+		super().__init__(
+			object_manager=object_manager,
+			pos=Point(*data["path"][0]),
+			priority=priority
+		)
 		self.path = [Point(*pos) for pos in data["path"]]
 		self.path_distance_list = [self.path[i].distance_to(self.path[i + 1]) for i in range(len(self.path) - 1)]
 		self.path_distance_sum = sum(self.path_distance_list)
@@ -35,7 +44,18 @@ class Ball(Object):
 		y1 = int(self.pos.y) - 13
 		x2 = int(self.pos.x) + 13
 		y2 = int(self.pos.y) + 13
-		env_data.collision_mask[y1:y2, x1:x2] |= self.mask_layer_id
+
+		# 26x26 원형 마스크 생성
+		size = 26
+		yy, xx = np.ogrid[:size, :size]
+		cx, cy = 12.5, 12.5
+		circle_mask = (xx - cx) ** 2 + (yy - cy) ** 2 < 12 ** 2  # 반지름 13짜리 원
+
+		# 대상 영역 슬라이스
+		target = env_data.dynamic_collision_mask[y1:y2, x1:x2]
+
+		# 원 모양 영역에만 OR 연산 적용
+		target[circle_mask] |= self.mask_layer_id
 
 	def step(self, env_data: EnvData) -> None:
 		# 환경 데이터
@@ -53,15 +73,22 @@ class Ball(Object):
 				break
 			cum_dis += d
 
-		segment_ratio = (target_distance - cum_dis) / d  # 현재 세그먼트 내에서 비율 계산
-		self.pos = self.path[i].interpolate(self.path[i + 1], segment_ratio)
+		if d == 0:
+			# 현재 세그먼트가 없으면 마지막 위치로 설정
+			self.pos = self.path[-1]
+		else:
+			segment_ratio = (target_distance - cum_dis) / d  # 현재 세그먼트 내에서 비율 계산
+			self.pos = self.path[i].interpolate(self.path[i + 1], segment_ratio)
+
+		# 충돌 마스크 업데이트
+		self.collision_mask(env_data)
 
 	def draw(self, env_data: EnvData) -> None:
 		shift: int = 10
 		pos = self.pos
 		pos -= .5
 		cv2.circle(
-			img=env_data.canvas,
+			img=env_data.dynamic_canvas,
 			center=(pos * (2.0 ** shift)).to_tuple_int(),
 			radius=int(12.5 * (2 ** shift)),
 			color=(0, 0, 0),
@@ -70,7 +97,7 @@ class Ball(Object):
 			shift=shift,
 		)
 		cv2.circle(
-			img=env_data.canvas,
+			img=env_data.dynamic_canvas,
 			center=(pos * (2.0 ** shift)).to_tuple_int(),
 			radius=int(6.5 * (2 ** shift)),
 			color=(0, 0, 255),

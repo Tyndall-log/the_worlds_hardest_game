@@ -25,7 +25,7 @@ class ReinforcementLearningWorker(QThread):
 		self.running = True  # 루프 제어 변수
 		self.player_num = 16
 		self.fps: int = 30
-		self.env = Environment(batch_size=self.player_num, fps=self.fps)
+		self.env = Environment("", player_num=self.player_num, fps=self.fps)
 		self.env.reset()
 		self.obs = self.env.observation
 		self.model = PPOModel(3, 9)

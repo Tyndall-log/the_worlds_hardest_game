@@ -1,5 +1,5 @@
 {
-    "map_name": "map2",
+    "map_name": "map1",
     "map_theme": "blue",
     "matrix": [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -16,19 +16,34 @@
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     ],
     "player_info": {
-        "init_pos": [150, 400]
+        "init_pos": [150, 400],
+        "extra_pos": [[950, 400]]
     },
     "coin_list": [
         {
-            "pos": [550, 400]
+            "pos": [300, 450]
+        },
+        {
+            "pos": [400, 350]
+        },
+        {
+            "pos": [500, 300]
+        },
+        {
+            "pos": [600, 500]
+        },
+        {
+            "pos": [700, 450]
+        },
+        {
+            "pos": [800, 350]
         }
     ],
     "ball_list": [
         {
             "type": "alone",
             "path": [
-                [276, 276],
-                [276, 526]
+                [300, 350]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -36,8 +51,7 @@
         {
             "type": "alone",
             "path": [
-                [326, 526],
-                [326, 276]
+                [400, 450]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -45,8 +59,7 @@
         {
             "type": "alone",
             "path": [
-                [376, 276],
-                [376, 526]
+                [500, 400]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -54,8 +67,7 @@
         {
             "type": "alone",
             "path": [
-                [426, 526],
-                [426, 276]
+                [500, 500]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -63,8 +75,7 @@
         {
             "type": "alone",
             "path": [
-                [476, 276],
-                [476, 526]
+                [600, 400]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -72,8 +83,7 @@
         {
             "type": "alone",
             "path": [
-                [526, 526],
-                [526, 276]
+                [600, 300]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -81,8 +91,7 @@
         {
             "type": "alone",
             "path": [
-                [576, 276],
-                [576, 526]
+                [700, 350]
             ],
             "path_mode": "bounce",
             "time": 1.1
@@ -90,62 +99,7 @@
         {
             "type": "alone",
             "path": [
-                [626, 526],
-                [626, 276]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [676, 276],
-                [676, 526]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [726, 526],
-                [726, 276]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [776, 276],
-                [776, 526]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [826, 526],
-                [826, 276]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [776, 276],
-                [776, 526]
-            ],
-            "path_mode": "bounce",
-            "time": 1.1
-        },
-        {
-            "type": "alone",
-            "path": [
-                [826, 526],
-                [826, 276]
+                [800, 450]
             ],
             "path_mode": "bounce",
             "time": 1.1
