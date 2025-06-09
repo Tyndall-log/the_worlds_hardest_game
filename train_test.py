@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import time
 from dataclasses import dataclass
 from collections import deque
 from threading import Lock, Thread
@@ -36,16 +37,17 @@ class Transition:
 	reward: float | np.float32
 	value: float | np.float32
 	done: bool | np.bool_
-	advantages: float | np.float32 = 0.0
+	advantage: float | np.float32 = 0.0
 	returns: float | np.float32 = 0.0
 
 
 class TrajectoryBuffer:
-	def __init__(self, env_num, player_num, gamma=0.99, lam=0.95):
+	def __init__(self, env_num, player_num, stack_frame, gamma=0.99, lam=0.95):
 		# self.buffer = []
 		self.env_num = env_num
 		self.player_num = player_num
-		self.env_player_buffer = [[] for _ in range(env_num * player_num)]
+		self.stack_frame = stack_frame
+		self.env_player_buffer: list[list[Transition]] = [[] for _ in range(env_num * player_num)]
 		self.env_player_buffer_ready_next_index = [0 for _ in range(env_num * player_num)]
 		self.locks = [Lock() for _ in range(env_num * player_num)]
 		self._all_ready_count = 0
@@ -68,9 +70,14 @@ class TrajectoryBuffer:
 				transitions = self.env_player_buffer[index][ready_last:]
 				rewards = [t.reward for t in transitions]
 				values = [t.value for t in transitions] + [0.0]
+				obses = [t.obs for t in transitions]
 				advantages, returns = compute_gae(rewards, values, self.gamma, self.lam)
 				for i, t in enumerate(transitions):
-					t.advantages = advantages[i]
+					obs = []
+					for f in range(1-self.stack_frame, 1):
+						obs.append(obses[max(0, i + f)])
+					t.obs = np.concatenate(obs, axis=-1)  # stack frame
+					t.advantage = advantages[i]
 					t.returns = returns[i]
 				self.env_player_buffer_ready_next_index[index] = len(self.env_player_buffer[index])
 				self._all_ready_count = min(self.env_player_buffer_ready_next_index)
@@ -83,14 +90,14 @@ class TrajectoryBuffer:
 		for lock in self.locks:
 			lock.acquire()
 		try:
-			if self.all_ready_count() < max_steps:
-				raise ValueError(f"Buffer is not ready. Minimum ready index: {self.all_ready_count()}, required: {max_steps}")
+			if self.all_ready_count < max_steps:
+				raise ValueError(f"Buffer is not ready. Minimum ready index: {self.all_ready_count}, required: {max_steps}")
 			rollout = []  # count = env_num * player_num * max_steps
 			for step in range(max_steps):
 				for i, buffer in enumerate(self.env_player_buffer):
 					rollout.append(buffer[step])
 			for i in range(len(self.env_player_buffer)):
-				self.env_player_buffer[i] = i[max_steps:]
+				self.env_player_buffer[i] = self.env_player_buffer[i][max_steps:]
 				self.env_player_buffer_ready_next_index[i] -= max_steps
 			self._all_ready_count = min(self.env_player_buffer_ready_next_index)
 			return rollout
@@ -160,9 +167,10 @@ def collect_env_data(
 	stack_frame: int,
 	n_players: int,
 	device: torch.device,
+	use_threading: bool = True,
 	dtype: torch.dtype = torch.float32,
 ):
-	previous_actions = [PreviousAction(k=6) for _ in range(n_players)]
+	previous_actions = [PreviousAction() for _ in range(n_players)]
 
 	obs, _ = env.reset()
 	obs_tensor = torch.tensor(obs, dtype=dtype).permute(0, 3, 1, 2).to(device)
@@ -204,6 +212,9 @@ def collect_env_data(
 			else:
 				obs[p_idx] = next_obs_batch[p_idx]
 
+		if not use_threading:
+			break
+
 
 def train(checkpoint_path=None):
 	root_path = Path(__file__).parent
@@ -217,7 +228,7 @@ def train(checkpoint_path=None):
 	save_rollout_step = 50  # 50번의 rollout마다 저장
 	global_step = 0  # 맨 위에 선언
 
-	n_envs = 4
+	n_envs = 1
 	n_players = 4  # 플레이어 수
 	map_list = ["map1.json", "map2.json", "map3.json", "map4.json"]
 	envs = [
@@ -236,45 +247,62 @@ def train(checkpoint_path=None):
 		model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 	optimizer = optim.Adam(model.parameters(), lr=2.5e-4)
 	buffer = TrajectoryBuffer(
-		env_num=n_envs, player_num=n_players,
+		env_num=n_envs, player_num=n_players, stack_frame=stack_frame,
 		gamma=0.997, lam=0.985,
 	)
 
 	max_steps_per_update = 2048 // 4
 
-	threads = [
-		Thread(
-			target=collect_env_data,
-			args=(envs[i], i, model, buffer, stack_frame, n_players, device),
-			name=f"collect_env_data_{i}",
-		) for i in range(n_envs)
-	]
-	for thread in threads:
-		thread.start()
+	use_threading = True
+	threads = []
+
+	if use_threading:
+		threads = [
+			Thread(
+				target=collect_env_data,
+				args=(envs[i], i, model, buffer, stack_frame, n_players, device),
+				name=f"collect_env_data_{i}",
+			) for i in range(n_envs)
+		]
+		for thread in threads:
+			thread.start()
 
 	rollout_step = 0
 	for _ in trange(int(1e6)):
+		time.sleep(0.5)  # 잠시 대기하여 CPU 사용량을 줄임
+		if not use_threading:
+			for i in range(n_envs):
+				collect_env_data(envs[i], i, model, buffer, stack_frame, n_players, device, use_threading)
 		if buffer.is_ready(max_steps_per_update):
 			rollout = buffer.get_rollout(max_steps_per_update)
-			global_step += sum(len(t.rewards) for t in rollout)
-			train_step(model, optimizer, rollout, device, writer=writer, global_step=global_step)
+			train_step(model, optimizer, rollout, device, writer=writer, global_step=rollout_step)
 			rollout_step += 1
 
 		if rollout_step != 0 and rollout_step % save_rollout_step == 0:
 			torch.save(model.state_dict(), save_path / f"model_step_{global_step}.pt")
 			print(f"✅ Model saved at step {global_step}")
 
+	if use_threading:
+		for thread in threads:
+			thread.join()
 
-def train_step(model, optimizer, rollout, device, writer, global_step, epochs=4, minibatch_size=64):
-	obs = torch.tensor(np.concatenate([t.observations for t in rollout]), dtype=torch.float32).permute(0, 3, 1, 2).to(device)
-	actions = torch.tensor(np.concatenate([t.actions for t in rollout]), dtype=torch.int64).to(device)
-	logprobs = torch.tensor(np.concatenate([t.log_probs for t in rollout]), dtype=torch.float32).to(device)
-	advantages = torch.tensor(np.concatenate([t.advantages for t in rollout]), dtype=torch.float32).to(device)
-	returns = torch.tensor(np.concatenate([t.returns for t in rollout]), dtype=torch.float32).to(device)
 
+def train_step(
+	model,
+	optimizer,
+	rollout: List[Transition],
+	device, writer, global_step, epochs=4, minibatch_size=64, dtype=torch.float32
+):
+	obs = torch.tensor(np.stack([t.obs for t in rollout]), dtype=dtype).permute(0, 3, 1, 2).to(device)
+	obs /= 255.0  # Normalize the observations to [0, 1]
+	actions = torch.tensor(np.stack([t.action for t in rollout]), dtype=torch.int64).to(device)
+	# rewards = torch.tensor(np.stack([t.reward for t in rollout]), dtype=dtype).to(device)
+	logprobs = torch.tensor(np.stack([t.log_prob for t in rollout]), dtype=dtype).to(device)
+	advantages = torch.tensor(np.stack([t.advantage for t in rollout]), dtype=dtype).to(device)
+	returns = torch.tensor(np.stack([t.returns for t in rollout]), dtype=dtype).to(device)
 	advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-	for _ in range(epochs):
+	for _ in trange(epochs):
 		inds = np.arange(len(obs))
 		np.random.shuffle(inds)
 		for start in range(0, len(obs), minibatch_size):
