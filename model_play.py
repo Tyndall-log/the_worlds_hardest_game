@@ -61,11 +61,11 @@ class EnvironmentVisualizer(QMainWindow):
 		}
 
 		# 강화학습 환경 및 모델 초기화
-		self.device = torch.device("mps")
+		self.device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 		self.player_num = 1
 		self.env = Environment(
 			name="test",
-			map_path=Path(__file__).parent / "stage_map" / "map_file" / "map4.json",
+			map_path=Path(__file__).parent / "stage_map/stage/stage0/map1.json",
 			player_num=self.player_num,
 			fps=self.fps
 		)
@@ -95,6 +95,7 @@ class EnvironmentVisualizer(QMainWindow):
 			print(f"self.cumulative_reward: {self.cumulative_reward}")
 			self.cumulative_reward = 0
 			self.obs = self.env.reset_player(0)[0]
+			self.obs = torch.tensor(obs, dtype=torch.float32).to(self.device)
 
 		# 이미지 업데이트
 		self.image_data = self.env.render()
@@ -148,7 +149,7 @@ class EnvironmentVisualizer(QMainWindow):
 if __name__ == "__main__":
 	app = QApplication(sys.argv)
 	visualizer = EnvironmentVisualizer(
-		checkpoint_path=Path(__file__).parent / "checkpoints" / "20250608_070523" / "model_step_2070016.pt",
+		checkpoint_path=Path(__file__).parent / "checkpoints/20250609_175535/model_step_465123.pt",
 		fps=30,
 	)
 	visualizer.show()

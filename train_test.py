@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 from collections import deque
+from threading import Lock, Thread
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,8 +13,10 @@ from typing import List
 from torch.utils.tensorboard import SummaryWriter
 
 from stage_map.env import Environment
-# from model.model7 import ResNetPolicy
+from model.model7 import ResNetPolicy
 from model.model6 import CNNPolicy
+
+Policy = ResNetPolicy
 
 def compute_gae(rewards, values, gamma=0.997, lam=0.985):
 	advantages = np.zeros_like(rewards)
@@ -33,92 +36,70 @@ class Transition:
 	reward: float | np.float32
 	value: float | np.float32
 	done: bool | np.bool_
-
-
-@dataclass
-class Trajectory:
-	env_num: int
-	player_num: int
-	observations: List[np.ndarray]
-	actions: List[int]
-	log_probs: List[float]
-	rewards: List[float]
-	values: List[float]
-	dones: List[bool]
-	advantages: np.ndarray
-	returns: np.ndarray
-
-	@classmethod
-	def from_transitions(
-		cls,
-		env_num: int,
-		player_num: int,
-		transitions: List[Transition],
-		gamma=0.997,
-		lam=0.985
-	):
-		rewards = [t.reward for t in transitions]
-		values = [t.value for t in transitions] + [0.0]
-		advantages, returns = compute_gae(rewards, values, gamma, lam)
-		return cls(
-			env_num=env_num,
-			player_num=player_num,
-			observations=[t.obs for t in transitions],
-			actions=[t.action for t in transitions],
-			log_probs=[t.log_prob for t in transitions],
-			rewards=rewards,
-			values=values[:-1],
-			dones=[t.done for t in transitions],
-			advantages=advantages,
-			returns=returns,
-		)
+	advantages: float | np.float32 = 0.0
+	returns: float | np.float32 = 0.0
 
 
 class TrajectoryBuffer:
-	def __init__(self, gamma=0.99, lam=0.95):
-		self.buffer = []
-		self.env_player_buffer = deque(maxlen=100)  # 최근 100개의 env-player 조합만 저장
+	def __init__(self, env_num, player_num, gamma=0.99, lam=0.95):
+		# self.buffer = []
+		self.env_num = env_num
+		self.player_num = player_num
+		self.env_player_buffer = [[] for _ in range(env_num * player_num)]
+		self.env_player_buffer_ready_next_index = [0 for _ in range(env_num * player_num)]
+		self.locks = [Lock() for _ in range(env_num * player_num)]
+		self._all_ready_count = 0
 		self.gamma = gamma
 		self.lam = lam
-
-	def add_trajectory(
+	
+	def add_transition(
 		self,
-		env_num: int,
-		player_num: int,
-		transitions: List[Transition],
+		env_idx: int,
+		player_idx: int,
+		transition: Transition,
 	):
-		traj = Trajectory.from_transitions(
-			env_num=env_num,
-			player_num=player_num,
-			transitions=transitions,
-			gamma=self.gamma,
-			lam=self.lam,
-		)
-		self.buffer.append(traj)
+		index = env_idx * self.player_num + player_idx
+		with self.locks[index]:
+			self.env_player_buffer[index].append(transition)
 
-	def total_steps(self):
-		return sum(len(t.rewards) for t in self.buffer)
+			if transition.done:
+				# advantages, returns 계산
+				ready_last = self.env_player_buffer_ready_next_index[index]
+				transitions = self.env_player_buffer[index][ready_last:]
+				rewards = [t.reward for t in transitions]
+				values = [t.value for t in transitions] + [0.0]
+				advantages, returns = compute_gae(rewards, values, self.gamma, self.lam)
+				for i, t in enumerate(transitions):
+					t.advantages = advantages[i]
+					t.returns = returns[i]
+				self.env_player_buffer_ready_next_index[index] = len(self.env_player_buffer[index])
+				self._all_ready_count = min(self.env_player_buffer_ready_next_index)
+
+	@property
+	def all_ready_count(self):
+		return self._all_ready_count
 
 	def get_rollout(self, max_steps):
-		rollout = []
-		used_trajectories = []
-		steps = 0
-		for t in self.buffer:
-			rollout.append(t)
-			used_trajectories.append(t)
-			steps += len(t.rewards)
-			if steps >= max_steps:
-				break
-		for t in used_trajectories:
-			self.buffer.remove(t)
-		return rollout
+		for lock in self.locks:
+			lock.acquire()
+		try:
+			if self.all_ready_count() < max_steps:
+				raise ValueError(f"Buffer is not ready. Minimum ready index: {self.all_ready_count()}, required: {max_steps}")
+			rollout = []  # count = env_num * player_num * max_steps
+			for step in range(max_steps):
+				for i, buffer in enumerate(self.env_player_buffer):
+					rollout.append(buffer[step])
+			for i in range(len(self.env_player_buffer)):
+				self.env_player_buffer[i] = i[max_steps:]
+				self.env_player_buffer_ready_next_index[i] -= max_steps
+			self._all_ready_count = min(self.env_player_buffer_ready_next_index)
+			return rollout
+		finally:
+			for lock in self.locks:
+				lock.release()
 
 	def is_ready(self, threshold):
-		return self.total_steps() >= threshold
-
-
-import torch
-from torch.distributions import Categorical
+		return threshold <= self.all_ready_count
 
 class PreviousAction:
 	def __init__(self, k=3):
@@ -160,7 +141,7 @@ def select_action(policy, obs, previous_action_list: list[PreviousAction]) -> tu
 	logprobs = []
 
 	for i, pa in enumerate(previous_action_list):
-		action, logprob = pa.step(logits_cpu[i])  # 이미 CPU에 있음
+		action, logprob = pa.step(logits_cpu[i])
 		actions.append(action)
 		logprobs.append(logprob)
 
@@ -171,16 +152,69 @@ def select_action(policy, obs, previous_action_list: list[PreviousAction]) -> tu
 	)
 
 
+def collect_env_data(
+	env: Environment,
+	env_idx: int,
+	model: Policy,
+	buffer: TrajectoryBuffer,
+	stack_frame: int,
+	n_players: int,
+	device: torch.device,
+	dtype: torch.dtype = torch.float32,
+):
+	previous_actions = [PreviousAction(k=6) for _ in range(n_players)]
+
+	obs, _ = env.reset()
+	obs_tensor = torch.tensor(obs, dtype=dtype).permute(0, 3, 1, 2).to(device)
+	obs_tensor = obs_tensor.repeat(1, stack_frame, 1, 1)  # (N, C, H, W) 형태로 변환
+
+	while True:
+		obs_tensor_temp = torch.tensor(obs, dtype=dtype)
+		obs_tensor_temp = obs_tensor_temp.permute(0, 3, 1, 2).to(device)
+		obs_tensor[:, :-4, ...] = obs_tensor[:, 4:, ...].clone()
+		obs_tensor[:, -4:, ...] = obs_tensor_temp
+
+		actions, logprobs, values = select_action(
+			model,
+			obs_tensor,
+			previous_actions,
+		)
+
+		next_obs_batch, rewards, terminateds, truncateds, infos = env.step(actions)
+
+		for p_idx in range(n_players):
+			transition = Transition(
+				obs=obs[p_idx].copy(),
+				action=actions[p_idx],
+				log_prob=logprobs[p_idx],
+				reward=rewards[p_idx],
+				value=values[p_idx],
+				done=terminateds[p_idx] or truncateds[p_idx],
+			)
+			buffer.add_transition(
+				env_idx=env_idx,
+				player_idx=p_idx,
+				transition=transition,
+			)
+
+			if transition.done:
+				obs[p_idx] = env.reset_player(p_idx)[0]
+				temp = torch.tensor(obs[p_idx], dtype=dtype).permute(2, 0, 1).to(device)
+				obs_tensor[p_idx, :, :, :] = temp.repeat(stack_frame, 1, 1)
+			else:
+				obs[p_idx] = next_obs_batch[p_idx]
+
+
 def train(checkpoint_path=None):
 	root_path = Path(__file__).parent
 	model_train_time = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-	log_folder = root_path / "logs" / model_train_time
+	log_folder = root_path / "checkpoints" / model_train_time
 	writer = SummaryWriter(log_dir=log_folder.as_posix())
 
 	save_path = root_path / "checkpoints" / model_train_time
 	save_path.mkdir(exist_ok=True)
 
-	save_interval = 10000  # 1만 스텝마다 저장
+	save_rollout_step = 50  # 50번의 rollout마다 저장
 	global_step = 0  # 맨 위에 선언
 
 	n_envs = 4
@@ -189,71 +223,44 @@ def train(checkpoint_path=None):
 	envs = [
 		Environment(
 			name=f"env_{i}_{map_list[i].split('.')[0]}",
-			map_path=root_path / "stage_map/stage/stage0" / map_list[i],
+			map_path=root_path / "stage_map/stage/stage1" / map_list[i],
 			player_num=n_players,
 		) for i in range(n_envs)
 	]
-	# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+	device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
-	model = CNNPolicy().to(device)
-	stack_frame = 1
+	stack_frame = 3
+	model = Policy(in_channels=4 * stack_frame).to(device)
 	if checkpoint_path is not None and checkpoint_path.exists():
 		print(f"Loading model from {checkpoint_path}")
 		model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 	optimizer = optim.Adam(model.parameters(), lr=2.5e-4)
-	buffer = TrajectoryBuffer(gamma=0.997, lam=0.985)
-	obs_batch = [env.reset()[0] for env in envs]
-	obs_tensor = torch.tensor(np.concatenate(obs_batch), dtype=torch.float32).permute(0, 3, 1, 2).to(device)
-	obs_tensor = obs_tensor.repeat(1, stack_frame, 1, 1)  # (N, C, H, W) 형태로 변환
+	buffer = TrajectoryBuffer(
+		env_num=n_envs, player_num=n_players,
+		gamma=0.997, lam=0.985,
+	)
 
 	max_steps_per_update = 2048 // 4
 
-	episode_transitions = [[[] for _ in range(n_players)] for _ in range(n_envs)]
-	previous_actions = [PreviousAction(k=6) for _ in range(n_envs * n_players)]
+	threads = [
+		Thread(
+			target=collect_env_data,
+			args=(envs[i], i, model, buffer, stack_frame, n_players, device),
+			name=f"collect_env_data_{i}",
+		) for i in range(n_envs)
+	]
+	for thread in threads:
+		thread.start()
 
-	for step in trange(int(1e6)):
-		obs_tensor_temp = torch.tensor(np.concatenate(obs_batch), dtype=torch.float32).permute(0, 3, 1, 2).to(device)
-		obs_tensor[:, :-4, ...] = obs_tensor[:, 4:, ...].clone()  # 프레임 스택 업데이트
-		obs_tensor[:, -4:, ...] = obs_tensor_temp
-		actions, logprobs, values = select_action(model, obs_tensor, previous_action_list=previous_actions)
-
-		next_obs_batch, rewards, terminateds, truncateds, infos = zip(
-			*(envs[i].step(actions[n_players*i:n_players*(i+1)]) for i in range(n_envs))
-		)
-
-		for e in range(n_envs):
-			for p in range(n_players):
-				transition = Transition(
-					obs=obs_batch[e][p].copy(),
-					action=actions[e * n_players + p],
-					log_prob=logprobs[e * n_players + p],
-					reward=rewards[e][p],
-					value=values[e * n_players + p],
-					done=terminateds[e][p] or truncateds[e][p],
-				)
-				# print(obs_batch[e][p].mean())
-				episode_transitions[e][p].append(transition)
-
-				if transition.done:
-					buffer.add_trajectory(
-						env_num=e,
-						player_num=p,
-						transitions=episode_transitions[e][p],
-					)
-					episode_transitions[e][p] = []
-					obs_batch[e][p] = envs[e].reset_player(p)[0]
-					temp = torch.tensor(obs_batch[e][p], dtype=torch.float32).permute(2, 0, 1).to(device)
-					obs_tensor[e * n_players + p, :, :, :] = temp.repeat(stack_frame, 1, 1)
-				else:
-					obs_batch[e][p] = next_obs_batch[e][p]
-
+	rollout_step = 0
+	for _ in trange(int(1e6)):
 		if buffer.is_ready(max_steps_per_update):
 			rollout = buffer.get_rollout(max_steps_per_update)
-			global_step += sum(len(t.rewards) for t in rollout)  # 수집 기준으로만 증가!
+			global_step += sum(len(t.rewards) for t in rollout)
 			train_step(model, optimizer, rollout, device, writer=writer, global_step=global_step)
+			rollout_step += 1
 
-		if step % save_interval == save_interval - 1:
+		if rollout_step != 0 and rollout_step % save_rollout_step == 0:
 			torch.save(model.state_dict(), save_path / f"model_step_{global_step}.pt")
 			print(f"✅ Model saved at step {global_step}")
 

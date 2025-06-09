@@ -7,7 +7,7 @@ class ResNetPolicy(nn.Module):
 		super().__init__()
 
 		# torchvision ResNet18 불러오기
-		resnet = models.resnet18(pretrained=False)
+		resnet = models.resnet18(weights=None)
 
 		# 입력 채널 수정 (기본값은 3)
 		if in_channels != 3:
