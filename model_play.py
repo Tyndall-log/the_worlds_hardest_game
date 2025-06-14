@@ -12,10 +12,13 @@ import cv2
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecFrameStack
 
-from stage_map.env import Environment
+from stage_map.env import Environment, SingleAgentWrapper
 from model.model6 import CNNPolicy
+from model.model7 import ResNetPolicy
 
+Policy = ResNetPolicy
 
 class EnvironmentVisualizer(QMainWindow):
 	def __init__(self, checkpoint_path, fps=60):
@@ -63,15 +66,23 @@ class EnvironmentVisualizer(QMainWindow):
 		# 강화학습 환경 및 모델 초기화
 		self.device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 		self.player_num = 1
-		self.env = Environment(
-			name="test",
+		# self.env = Environment(
+		# 	name="test",
+		# 	map_path=Path(__file__).parent / "stage_map/stage/stage0/map1.json",
+		# 	player_num=self.player_num,
+		# 	fps=self.fps
+		# )
+		self.env = SingleAgentWrapper(
 			map_path=Path(__file__).parent / "stage_map/stage/stage0/map1.json",
-			player_num=self.player_num,
 			fps=self.fps
 		)
-		self.env.reset()
-		self.obs = torch.tensor(self.env.observation, dtype=torch.float32).to(self.device)
-		self.model = CNNPolicy(4, 9).to(self.device)
+		self.env.render_mode = "rgb_array"
+		self.env = DummyVecEnv([lambda: self.env])  # 벡터화된 환경으로 래핑
+		self.n_stack = 3
+		self.env = VecFrameStack(self.env, n_stack=self.n_stack, channels_order="first")  # 프레임 스택
+		self.obs = self.env.reset()
+		self.obs = torch.tensor(self.obs, dtype=torch.float32).to(self.device)
+		self.model = Policy(4 * self.n_stack, 9).to(self.device)
 		self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
 		self.model.eval()
 		self.cumulative_reward = 0
@@ -81,20 +92,24 @@ class EnvironmentVisualizer(QMainWindow):
 		# actions = [self.user_action] + [0] * (self.player_num - 1)
 
 		# 모델 추론
-		x = self.obs.permute(0, 3, 1, 2)
+		x = self.obs
+		x /= 255.0  # Normalize the input
 		logits, value = self.model(x)
 		m = Categorical(logits=logits)
 		actions = m.sample().cpu().numpy()
 
 		# 환경 업데이트
-		obs, rewards, terminated, truncated, infos = self.env.step(actions)
+		# obs, rewards, terminated, truncated, infos = self.env.step(actions)
+		# done = terminated[0] or truncated[0]
+		obs, rewards, done, infos = self.env.step(actions)
 		self.obs = torch.tensor(obs, dtype=torch.float32).to(self.device)
 		self.cumulative_reward += rewards[0]
 
-		if terminated[0] or truncated[0]:
+		if done:
 			print(f"self.cumulative_reward: {self.cumulative_reward}")
 			self.cumulative_reward = 0
-			self.obs = self.env.reset_player(0)[0]
+			# self.obs = self.env.reset_player(0)[0]
+			self.obs = self.env.reset()
 			self.obs = torch.tensor(obs, dtype=torch.float32).to(self.device)
 
 		# 이미지 업데이트
@@ -149,7 +164,8 @@ class EnvironmentVisualizer(QMainWindow):
 if __name__ == "__main__":
 	app = QApplication(sys.argv)
 	visualizer = EnvironmentVisualizer(
-		checkpoint_path=Path(__file__).parent / "checkpoints/20250609_175535/model_step_465123.pt",
+		# checkpoint_path=Path(__file__).parent / "checkpoints/20250609_175535/model_step_465123.pt",
+		checkpoint_path=Path(__file__).parent / "model_step_40.pt",
 		fps=30,
 	)
 	visualizer.show()

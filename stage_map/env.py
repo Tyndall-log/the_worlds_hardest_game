@@ -14,6 +14,8 @@ from stage_map.object.ball import Ball
 from stage_map.object.coin import Coin
 from stage_map.map import MapData
 
+root_path = Path(__file__).parent.parent
+
 class Environment(gym.Env):
 	_map_data: MapData
 	_object_manager: ObjectManager
@@ -38,7 +40,8 @@ class Environment(gym.Env):
 	def __init__(
 		self,
 		name: str,
-		map_path: Path = Path(__file__).parent / "map_file" / "map1.json",
+		map_path: Path | None = None,
+		map_data_dict: dict | None = None,
 		player_num: int = 16,
 		fps: int = 30,
 		max_time_seconds: int = 60,
@@ -48,7 +51,9 @@ class Environment(gym.Env):
 		self.name = name  # 환경 이름
 
 		self.player_num = player_num  # 플레이어 수 (배치 크기와 동일)
+		self.single_player = player_num == 1  # 단일 플레이어 여부
 		self.map_path = map_path  # 맵 파일 경로
+		self.map_data_dict = map_data_dict  # 맵 데이터 딕셔너리
 
 		# 행동 공간: 정지, 상, 우상, 우, 우하, 하, 좌하, 좌, 좌상
 		self.action_space = spaces.Discrete(9)
@@ -63,7 +68,10 @@ class Environment(gym.Env):
 		self.observation = np.zeros((player_num, self.input_height, self.input_width, 4), dtype=np.uint8)
 
 		# 맵 데이터 로드
-		self._map_data = MapData(self.map_path)
+		self._map_data = MapData(
+			map_file_path=map_path,
+			map_data_dict=map_data_dict,
+		)
 
 		# 객체 관리자 초기화
 		self._object_manager = self._map_data.object_manager
@@ -96,6 +104,12 @@ class Environment(gym.Env):
 			map_data=self._map_data,
 		)
 
+	@property
+	def map_data(self) -> MapData:
+		"""
+		맵 데이터 반환
+		"""
+		return self._map_data
 
 	def reset(self, seed=None, options=None):
 		"""
@@ -117,7 +131,37 @@ class Environment(gym.Env):
 			crop_offset=(self.crop_offset_x, self.crop_offset_y),
 		)
 
-		return self.observation, {}
+		# if self.single_player:
+		# 	return self.observation[0].transpose(2, 0, 1).copy(), {}
+
+		return self.observation.transpose(0, 3, 1, 2).copy(), {}
+
+	def reset_map(self, map_data_dict: dict):
+		"""
+		맵 데이터를 업데이트하고 플레이어를 초기화합니다.
+		Args:
+			map_data_dict (dict): 새로운 맵 데이터 딕셔너리.
+		"""
+		self.map_data_dict = map_data_dict  # 맵 데이터 딕셔너리
+		self.observation = np.zeros((self.player_num, self.input_height, self.input_width, 4), dtype=np.uint8)
+
+		# 맵 데이터 로드
+		self._map_data = MapData(
+			map_data_dict=map_data_dict,
+		)
+		self._object_manager = self._map_data.object_manager
+		self.player_object_list = [
+			self._map_data.get_player(i, random_init_pos=True) for i in range(self.player_num)
+		]
+		self.ball_object_list = self._map_data.get_ball_data()
+		self.coin_object_list = self._map_data.get_coin_data()
+		self._env_data = EnvData(
+			name=self.name,
+			object_manager=self._object_manager,
+			player_object_list=self.player_object_list,
+			coin_object_list=self.coin_object_list,
+			map_data=self._map_data,
+		)
 
 	def reset_player(self, player_id: int):
 		"""
@@ -144,7 +188,7 @@ class Environment(gym.Env):
 				temp,
 				temp2,
 			], axis=-1)
-			return obs[0], {}
+			return obs[0].transpose(2, 0, 1), {}
 		else:
 			raise ValueError(f"Invalid player_id: {player_id}. Must be between 0 and {self.player_num - 1}.")
 
@@ -243,7 +287,11 @@ class Environment(gym.Env):
 		# 추가 정보
 		infos = {}
 
-		return self.observation.copy(), rewards, terminated, truncated, infos
+		# if self.single_player:
+		# 	# 단일 플레이어 환경의 경우, 반환 형식에 맞게 변환
+		# 	return self.observation[0].transpose(2, 0, 1).copy(), rewards[0], terminated[0], truncated[0], infos
+
+		return self.observation.transpose(0, 3, 1, 2).copy(), rewards, terminated, truncated, infos
 
 	def render(self, mode="high_rgb_array"):
 		"""
@@ -298,13 +346,116 @@ class Environment(gym.Env):
 			cv2.resize(cropped_image, resize_size, dst=dst_batch_image[i], interpolation=cv2.INTER_AREA)
 
 
+class SingleEnvironment(gym.Env):
+	"""
+	멀티 에이전트 환경을 단일 에이전트 환경으로 래핑하는 클래스
+	"""
+
+	def __init__(
+		self,
+		name: str = "single_env",
+		map_path: Path = None,
+		map_data_dict: dict = None,
+		player_id: int = 0,
+		fps: int = 30,
+		max_time_seconds: int = 60,
+		train_mode: bool = True
+	):
+		super(SingleEnvironment, self).__init__()
+
+		self.player_id = player_id
+		self.train_mode = train_mode
+		self.init_first_reset = False
+
+		# 원본 환경 생성 (단일 플레이어)
+		self.env = Environment(
+			name=name,
+			map_path=map_path,
+			map_data_dict=map_data_dict,
+			player_num=1,  # 단일 플레이어
+			fps=fps,
+			max_time_seconds=max_time_seconds,
+			train_mode=train_mode
+		)
+
+		# 액션 공간: 9개 방향 (정지, 상, 우상, 우, 우하, 하, 좌하, 좌, 좌상)
+		self.action_space = gym.spaces.Discrete(9)
+
+		# 관찰 공간: 4채널 이미지 (C, H, W) 형태로 변환
+		original_shape = self.env.observation_space.shape  # (1, 4, H, W)
+		self.observation_space = gym.spaces.Box(
+			low=0,
+			high=255,
+			shape=(original_shape[1], original_shape[2], original_shape[3]),  # (C, H, W)
+			dtype=np.uint8
+		)
+
+	def reset(self, seed=None, options=None):
+		"""환경 초기화"""
+		if self.init_first_reset is False:
+			obs, info = self.env.reset(seed=seed, options=options)
+			# 관찰값 형태 변환: (1, H, W, 4) -> (4, H, W)
+			obs_single = obs[0]
+			self.init_first_reset = True
+		else:
+			obs, info = self.env.reset_player(self.player_id)
+			obs_single = obs  # (H, W, 4) -> (4, H, W)
+		return obs_single, info
+
+	def step(self, action):
+		"""환경 한 스텝 진행"""
+		# 액션을 배열로 변환 (단일 플레이어이므로 크기 1)
+		actions = np.array([action])
+
+		obs, rewards, terminated, truncated, infos = self.env.step(actions)
+
+		# 관찰값 형태 변환: (1, H, W, 4) -> (4, H, W)
+		obs_single = obs[0]
+
+		# 단일 값으로 변환
+		reward = rewards[0]
+		done = terminated[0]
+		trunc = truncated[0]
+
+		if done or trunc:
+			# # 에피소드가 끝났을 때 리셋
+			# obs_single, _ = self.env.reset()
+			pass
+
+		return obs_single, reward, done, trunc, infos
+
+	def render(self, mode="rgb_array"):
+		"""렌더링"""
+		if mode == "rgb_array":
+			# 원본 환경의 렌더링 결과를 RGB 배열로 반환
+			image = self.env.render(mode="high_rgb_array")
+			return image
+		else:
+			return self.env.render(mode=mode)
+
+	def close(self):
+		"""환경 종료"""
+		self.env.close()
+
+	# 부모 멤버변수 연결
+	def __getattr__(self, item):
+		"""
+		부모 클래스(Environment)의 멤버 변수에 접근할 수 있도록 연결
+		"""
+		if hasattr(self.env, item):
+			return getattr(self.env, item)
+		else:
+			raise AttributeError(f"{item} not found in Environment.")
+
+
 # 테스트 코드
 if __name__ == "__main__":
 	import time
 	player_num = 16
 	fps: int = 30
 	env = Environment(
-		map_path=Path(__file__).parent / "map_file" / "map2.json",
+		name="test_env",
+		map_path=root_path / "map_file" / "map2.json",
 		player_num=player_num,
 		fps=fps,
 	)

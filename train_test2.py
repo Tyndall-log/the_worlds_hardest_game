@@ -60,11 +60,11 @@ class SingleAgentWrapper(gym.Env):
 		if self.init_first_reset is False:
 			obs, info = self.env.reset(seed=seed, options=options)
 			# 관찰값 형태 변환: (1, H, W, 4) -> (4, H, W)
-			obs_single = obs[0].transpose(2, 0, 1)
+			obs_single = obs[0]
 			self.init_first_reset = True
 		else:
 			obs, info = self.env.reset_player(self.player_id)
-			obs_single = obs.transpose(2, 0, 1)  # (H, W, 4) -> (4, H, W)
+			obs_single = obs  # (H, W, 4) -> (4, H, W)
 		return obs_single, info
 
 	def step(self, action):
@@ -75,7 +75,7 @@ class SingleAgentWrapper(gym.Env):
 		obs, rewards, terminated, truncated, infos = self.env.step(actions)
 
 		# 관찰값 형태 변환: (1, H, W, 4) -> (4, H, W)
-		obs_single = obs[0].transpose(2, 0, 1)
+		obs_single = obs[0]
 
 		# 단일 값으로 변환
 		reward = rewards[0]
@@ -183,17 +183,6 @@ def test_a2c_with_maze():
 			print(f"기존 모델을 로드합니다: {model_path}")
 			model = A2C.load(model_path, env=env)
 
-		# 훈련 전 성능 평가
-		print("\n--- 훈련 전 성능 ---")
-		try:
-			mean_reward_before, std_reward_before = evaluate_policy(
-				model, env, n_eval_episodes=3, deterministic=True
-			)
-			print(f"평균 보상: {mean_reward_before:.2f} +/- {std_reward_before:.2f}")
-		except Exception as e:
-			print(f"초기 평가 중 오류: {e}")
-			mean_reward_before = -999
-
 		# 콜백 설정
 		callback = TrainingCallback(eval_freq=1000)
 
@@ -202,22 +191,6 @@ def test_a2c_with_maze():
 		print("이미지 기반 환경이므로 훈련에 시간이 걸릴 수 있습니다...")
 
 		model.learn(total_timesteps=100000, callback=callback)
-
-		# 훈련 후 성능 평가
-		print("\n--- 훈련 후 성능 ---")
-		try:
-			mean_reward_after, std_reward_after = evaluate_policy(
-				model, env, n_eval_episodes=5, deterministic=True
-			)
-			print(f"평균 보상: {mean_reward_after:.2f} +/- {std_reward_after:.2f}")
-
-			# 성능 향상 확인
-			if mean_reward_before != -999:
-				improvement = mean_reward_after - mean_reward_before
-				print(f"성능 향상: {improvement:.2f}")
-
-		except Exception as e:
-			print(f"최종 평가 중 오류: {e}")
 
 		return model, env
 
@@ -358,15 +331,15 @@ if __name__ == "__main__":
 	print("\n" + "=" * 60)
 
 	try:
-		if Path("a2c_maze_model").exists():
-			A2C.load("a2c_maze_model")
+		# if Path("a2c_maze_model").exists():
+		# 	A2C.load("a2c_maze_model")
 
 		# 1. 미로 탈출 환경에서 A2C 테스트
 		maze_model, maze_env = test_a2c_with_maze()
 
 		if maze_model is not None and maze_env is not None:
 			# 2. 훈련된 에이전트 시연
-			demonstrate_maze_agent(maze_model, maze_env)
+			# demonstrate_maze_agent(maze_model, maze_env)
 
 			# 3. 모델 저장/로드 테스트
 			loaded_model = save_and_load_maze_model(maze_model)

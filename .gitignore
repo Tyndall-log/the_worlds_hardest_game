@@ -7,3 +7,4 @@ __pycache__
 /image_source
 *.pth
 *.zip
+*.pt

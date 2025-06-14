@@ -46,8 +46,9 @@ class MapData:
 	# _checkpoint_respon_pos: list[Point] = []
 	# _goal_num: int = 0
 
-	def __init__(self, map_file_path: Path | None, map_read_only_flag: bool = True):
+	def __init__(self, map_file_path: Path | None = None, map_data_dict: dict | None = None, map_read_only_flag: bool = True):
 		self.map_file_path = map_file_path
+		self.map_data_dict = map_data_dict
 		self.map_file_name = map_file_path.name if map_file_path is not None else "아직 불러오지 않음"
 		self.object_manager: ObjectManager = ObjectManager()
 		self.background_image: np.ndarray = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
@@ -60,7 +61,32 @@ class MapData:
 		self._coin_count = 0
 		self.map_ready_flag = False
 		if map_file_path is not None:
-			self.load_map(map_file_path)
+			with open(self.map_file_path, 'r') as file:
+				data = json.load(file)
+				self.load_map(data)
+		elif map_data_dict is not None:
+			self.map_data_dict = map_data_dict
+			self.load_map(self.map_data_dict)
+		else:
+			raise ValueError("맵 파일 경로 또는 맵 데이터 딕셔너리를 제공해야 합니다.")
+
+	def reset(self, map_file_path: Path | None = None, map_data_dict: dict | None = None):
+		"""맵 데이터를 초기화합니다."""
+		self.object_manager = ObjectManager()
+		self.ball_data_list.clear()
+		self.coin_data_list.clear()
+		self.map_ready_flag = False
+		if map_file_path is not None:
+			self.map_file_path = map_file_path
+			self.map_file_name = map_file_path.name
+			with open(self.map_file_path, 'r') as file:
+				data = json.load(file)
+				self.load_map(data)
+		elif map_data_dict is not None:
+			self.map_data_dict = map_data_dict
+			self.load_map(self.map_data_dict)
+		else:
+			raise ValueError("맵 파일 경로 또는 맵 데이터 딕셔너리를 제공해야 합니다.")
 
 	def draw_background(self, data: dict):
 		map_matrix = np.array(data["matrix"])
@@ -158,26 +184,24 @@ class MapData:
 		# 	m_img[y1:y2, x1:x2] = MaskInfo.MaskLayer.WALL
 		return
 
-	def load_map(self, file_path: Path):
-		with open(file_path, 'r') as file:
-			data = json.load(file)
-			if "map_name" not in data:
-				raise KeyError(f"{Path}에 필수 키 \"map_name\"이(가) 존재하지 않습니다.")
-			self.map_name = data["map_name"]
-			if "map_theme" in data:
-				self.map_theme = self.ThemeInfo(data["map_theme"])
-			if "matrix" not in data:
-				raise KeyError(f"{Path}에 필수 키 \"matrix\"이(가) 존재하지 않습니다.")
-			self.draw_background(data)
+	def load_map(self, data: dict):
+		if "map_name" not in data:
+			raise KeyError(f"{Path}에 필수 키 \"map_name\"이(가) 존재하지 않습니다.")
+		self.map_name = data["map_name"]
+		if "map_theme" in data:
+			self.map_theme = self.ThemeInfo(data["map_theme"])
+		if "matrix" not in data:
+			raise KeyError(f"{Path}에 필수 키 \"matrix\"이(가) 존재하지 않습니다.")
+		self.draw_background(data)
 
-			if "player_info" in data:
-				self.player_info = data["player_info"]
-			if "ball_list" in data:
-				self.ball_data_list = data["ball_list"]
-			if "coin_list" in data:
-				self.coin_data_list = data["coin_list"]
-				self._coin_count = len(self.coin_data_list)
-			self.map_ready_flag = True
+		if "player_info" in data:
+			self.player_info = data["player_info"]
+		if "ball_list" in data:
+			self.ball_data_list = data["ball_list"]
+		if "coin_list" in data:
+			self.coin_data_list = data["coin_list"]
+			self._coin_count = len(self.coin_data_list)
+		self.map_ready_flag = True
 
 	def get_player(self, player_id: int, random_init_pos: bool = True):
 		return Player(

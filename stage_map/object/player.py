@@ -14,7 +14,7 @@ class Player(Object):
 	coin_reward = 3
 	coin_smell_reward = 0.002
 	# ball_smell_reward = -0.1
-	goal_reward = 3
+	goal_reward = 5
 	change_action_penalty = -0.001
 	step_penalty = -0.0005  # 최종 보상에 적용되는 패널티
 	# stop_penalty = -0.05

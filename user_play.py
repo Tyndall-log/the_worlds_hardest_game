@@ -66,7 +66,7 @@ class EnvironmentVisualizer(QMainWindow):
 			name="env_user_play",
 			map_path=Path(__file__).parent / "stage_map" / "stage" / "stage0" / "make.json",
 			player_num=self.player_num,
-			fps=self.fps
+			fps=self.fps,
 		)
 		self.env.reset()
 		self.obs = torch.tensor(self.env.observation, dtype=torch.float32).to(self.device)
