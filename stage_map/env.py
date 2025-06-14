@@ -47,10 +47,6 @@ class Environment(gym.Env):
 		super(Environment, self).__init__()
 		self.name = name  # 환경 이름
 
-		self.player_object_list: list[Player] = []
-		self.ball_object_list: list[Ball] = []
-		self.coin_object_list: list[Coin] = []
-
 		self.player_num = player_num  # 플레이어 수 (배치 크기와 동일)
 		self.map_path = map_path  # 맵 파일 경로
 
@@ -80,18 +76,9 @@ class Environment(gym.Env):
 
 		self.train_mode = train_mode  # 학습 모드 여부
 
-
-	def reset(self, seed=None, options=None):
-		"""
-		환경을 초기화하고 초기 상태를 반환.
-		"""
-		super().reset(seed=seed)
-		# # 맵 데이터 로드
-		# self._map_data = MapData(self.map_path)
-
 		# 플레이어 오브젝트 준비
 		self.player_object_list = [
-			self._map_data.get_player(i, random_init_pos=self.train_mode) for i in range(self.player_num)
+			self._map_data.get_player(i, random_init_pos=True) for i in range(self.player_num)
 		]
 
 		# 공 오브젝트 준비
@@ -108,18 +95,18 @@ class Environment(gym.Env):
 			coin_object_list=self.coin_object_list,
 			map_data=self._map_data,
 		)
-		# self.orign_observation = np.repeat(
-		# 	self._map_data.background_image[np.newaxis, :, :, :],
-		# 	repeats=self.player_num,
-		# 	axis=0,
-		# )
-		# self._env_data_list = [
-		# 	EnvData(self.orign_observation[i], self._env_data.collision_mask)
-		# 	for i in range(self.player_num)
-		# ]
+
+
+	def reset(self, seed=None, options=None):
+		"""
+		환경을 초기화하고 초기 상태를 반환.
+		"""
+		super().reset(seed=seed)
+
+		for p in self.player_object_list:
+			p.reset(env_data=self._env_data, seed=seed)
 		self._objects_draw()
-		# self.orign_observation[..., :3] = self._env_data.player_draw_canvas
-		# self.orign_observation[..., 3] = self._env_data.player_trail_canvas
+
 		self.orign_observation = np.concatenate([
 			self._env_data.player_draw_canvas,
 			self._env_data.player_trail_canvas[..., np.newaxis]
@@ -129,7 +116,6 @@ class Environment(gym.Env):
 			self.observation,
 			crop_offset=(self.crop_offset_x, self.crop_offset_y),
 		)
-		# cv2.imshow("Map", self._env_data.canvas)
 
 		return self.observation, {}
 
@@ -241,23 +227,23 @@ class Environment(gym.Env):
 			if self.max_step <= player.step_count:
 				truncated[i] = True
 
-				# 최종 보상 계산
-				coin_count = self._env_data.coin_count
-				coin_collected = len(player.coin_id_set)
-				sum_count = coin_count + 2  # 코인 개수 + 2 (최대 보상 계산을 위한 상수)
-				success_ratio = coin_collected / sum_count
-
-				# 실패에 대한 보상 (예: -goal_reward ~ +goal_reward)
-				final_reward = -player.goal_reward + 2 * player.goal_reward * success_ratio
-				final_reward += player.step_penalty * player.step_count
-				rewards[i] += final_reward
+				# # 최종 보상 계산
+				# coin_count = self._env_data.coin_count
+				# coin_collected = len(player.coin_id_set)
+				# sum_count = coin_count + 2  # 코인 개수 + 2 (최대 보상 계산을 위한 상수)
+				# success_ratio = coin_collected / sum_count
+				#
+				# # 실패에 대한 보상 (예: -goal_reward ~ +goal_reward)
+				# final_reward = -player.goal_reward + 2 * player.goal_reward * success_ratio
+				# final_reward += player.step_penalty * player.step_count
+				# rewards[i] += final_reward
 
 				# player.reset(env_data=self._env_data)
 
 		# 추가 정보
 		infos = {}
 
-		return self.observation, rewards, terminated, truncated, infos
+		return self.observation.copy(), rewards, terminated, truncated, infos
 
 	def render(self, mode="high_rgb_array"):
 		"""

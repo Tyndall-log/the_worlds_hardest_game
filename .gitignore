@@ -5,3 +5,5 @@ __pycache__
 *.kra
 
 /image_source
+*.pth
+*.zip

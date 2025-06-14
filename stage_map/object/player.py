@@ -6,17 +6,17 @@ from stage_map.mask import MaskInfo
 
 class Player(Object):
 	size = (36, 36)
-	die_reward = -10
-	wall_reward = -0.2
-	# move_reward = -0.005
+	die_reward = -1
+	wall_reward = -0.02
+	# move_reward = -0.0005
 	move_reward = -0.0
-	checkpoint_reward = 30
-	coin_reward = 30
-	coin_smell_reward = 0.02
+	checkpoint_reward = 1
+	coin_reward = 3
+	coin_smell_reward = 0.002
 	# ball_smell_reward = -0.1
-	goal_reward = 50
-	change_action_penalty = -0.01
-	step_penalty = -0.005  # 최종 보상에 적용되는 패널티
+	goal_reward = 3
+	change_action_penalty = -0.001
+	step_penalty = -0.0005  # 최종 보상에 적용되는 패널티
 	# stop_penalty = -0.05
 	# env_end_penalty = -100
 
@@ -100,9 +100,9 @@ class Player(Object):
 		"""
 		return self.coin_smell_reward / (1 + (distance / 200) ** 2)
 
-	def reset(self, env_data: EnvData):
-		# self.pos = self.init_pos.copy()
-		self.pos = np.random.choice(self.init_pos_list).copy()
+	def reset(self, env_data: EnvData, seed=None):
+		rng = np.random.default_rng(seed=seed)
+		self.pos = rng.choice(self.init_pos_list).copy()
 		self.action = 0
 		self.previous_action = 0
 		self.is_dead = False
@@ -127,8 +127,8 @@ class Player(Object):
 		# dx, dy 값 업데이트
 		dx, dy = self.movement[self.action]
 
-		# 이동 패널티
-		self._reward += self.compute_inertia_penalty(penalty_weight=self.change_action_penalty, norm_type="l2")
+		# # 이동(관성) 패널티
+		# self._reward += self.compute_inertia_penalty(penalty_weight=self.change_action_penalty, norm_type="l2")
 
 		# 지속 정지 패널티
 
@@ -159,6 +159,16 @@ class Player(Object):
 		# 오른쪽
 		if (mask[a_y-1:a_y+1, x1+w] & MaskInfo.MaskLayer.WALL).any():
 			dx -= self.speed
+
+		# 플레이어 이동
+		self.pos += Point(dx, dy)
+
+		# 플레이어 위치 업데이트
+		a_x, a_y = int(self.pos.x), int(self.pos.y)
+		x1 = int(a_x - self.anchor.x * w)
+		y1 = int(a_y - self.anchor.y * h)
+		x2 = x1 + w
+		y2 = y1 + h
 
 		# 체크포인트 지역 검사
 		# if (mask[y1:y1+h, x1:x1+w] & MaskInfo.MaskLayer.CHECKPOINT_ZONE).any():
@@ -209,7 +219,7 @@ class Player(Object):
 
 		self._reward += self.move_reward * (dx**2 + dy**2)**0.5 / self.speed
 
-		self.pos += Point(dx, dy)
+
 		self.previous_action = self.action
 		self.step_count += 1
 
@@ -229,7 +239,7 @@ class Player(Object):
 		if view_canvas is None:
 			roi = env_data.player_trail_canvas[self.player_id, y1:y2, x1:x2]
 			mask = roi < 255
-			roi[mask] += 1
+			roi[mask] += 32
 		x1 += 6
 		y1 += 6
 		x2 -= 6

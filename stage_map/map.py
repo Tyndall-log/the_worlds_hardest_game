@@ -46,9 +46,9 @@ class MapData:
 	# _checkpoint_respon_pos: list[Point] = []
 	# _goal_num: int = 0
 
-	def __init__(self, map_file_path: Path, map_read_only_flag: bool = True):
+	def __init__(self, map_file_path: Path | None, map_read_only_flag: bool = True):
 		self.map_file_path = map_file_path
-		self.map_file_name = map_file_path.name
+		self.map_file_name = map_file_path.name if map_file_path is not None else "아직 불러오지 않음"
 		self.object_manager: ObjectManager = ObjectManager()
 		self.background_image: np.ndarray = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
 		self.mask_info: MaskInfo = MaskInfo(np.zeros((self.image_height, self.image_width), dtype=np.uint8))
@@ -59,13 +59,107 @@ class MapData:
 		self._checkpoint_id_mask = np.zeros((self.image_height, self.image_width), dtype=np.uint8)
 		self._coin_count = 0
 		self.map_ready_flag = False
-		self.load_map(map_file_path)
+		if map_file_path is not None:
+			self.load_map(map_file_path)
+
+	def draw_background(self, data: dict):
+		map_matrix = np.array(data["matrix"])
+		if map_matrix.shape != (self.map_height, self.map_width):
+			raise ValueError("맵 크기가 12x20이 아닙니다.")
+		padded_matrix = np.pad(map_matrix, ((1, 1), (1, 1)), mode='constant', constant_values=0)
+		map_height = self.map_height
+		map_width = self.map_width
+
+		b_img = self.background_image
+		m_img = self.mask_info.mask_image
+		b_img[:53, :] = self.map_theme.letterbox_color
+		m_img[:53, :] = MaskInfo.MaskLayer.LETTERBOX
+		b_img[53:-53, :] = self.map_theme.background_color
+		m_img[53:-53, :] = MaskInfo.MaskLayer.WALL
+		b_img[-53:, :] = self.map_theme.letterbox_color
+		m_img[-53:, :] = MaskInfo.MaskLayer.LETTERBOX
+		grid_size = 50
+		# shift = 10
+
+		# 체크포인트 지역 분할
+		checkpoint_id_grid = self._checkpoint_id_grid
+		next_checkpoint_id = 0
+
+		def checkpoint_bfs(i, j):
+			# if self._checkpoint_grid[i, j] == 0:
+			if padded_matrix[i, j] != 2:
+				return
+			queue = deque([(i, j)])
+			while queue:
+				x, y = queue.popleft()
+				if checkpoint_id_grid[x, y] != 0:
+					continue
+				checkpoint_id_grid[x, y] = next_checkpoint_id
+				for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+					nx, ny = x + dx, y + dy
+					if padded_matrix[nx][ny] == 2:
+						queue.append((nx, ny))
+
+		for y in range(1, map_height + 1):
+			for x in range(1, map_width + 1):
+				if padded_matrix[y][x] == 2 and checkpoint_id_grid[y][x] == 0:
+					next_checkpoint_id += 1
+					checkpoint_bfs(y, x)
+		self._checkpoint_count = next_checkpoint_id
+
+		# 바닥 타일 배치 & 체크포인트 지역 타일 배치
+		checkpoint_id_mask = self._checkpoint_id_mask
+		for y in range(1, map_height + 1):
+			for x in range(1, map_width + 1):
+				if padded_matrix[y][x] == 0:
+					continue
+				y1 = 50 + y * grid_size
+				x1 = x * grid_size
+				if padded_matrix[y][x] == 1:
+					tile_color = self.map_theme.floor_tile_color_list[(x + y) % 2]
+					b_img[y1:y1 + grid_size, x1:x1 + grid_size] = tile_color
+					m_img[y1:y1 + grid_size, x1:x1 + grid_size] = 0
+				elif padded_matrix[y][x] == 2:
+					tile_color = self.map_theme.checkpoint_zone_color
+					b_img[y1:y1 + grid_size, x1:x1 + grid_size] = tile_color
+					m_img[y1:y1 + grid_size, x1:x1 + grid_size] = MaskInfo.MaskLayer.CHECKPOINT_ZONE
+					checkpoint_id_mask[y1:y1 + grid_size, x1:x1 + grid_size] = checkpoint_id_grid[y][x]
+				else:
+					raise ValueError(f"알 수 없는 타일 값: {padded_matrix[y][x]}")
+
+		# 벽(경계) 추가
+		for y in range(0, map_height + 1):
+			for x in range(0, map_width + 1):
+				g1 = padded_matrix[y][x]
+				g2 = padded_matrix[y][x + 1]
+				g3 = padded_matrix[y + 1][x]
+				g4 = padded_matrix[y + 1][x + 1]
+				if (0 < g1) ^ (0 < g2):
+					y1 = 50 + y * grid_size - 3
+					y2 = 50 + (y + 1) * grid_size + 3
+					x1 = (x + 1) * grid_size - 3
+					x2 = (x + 1) * grid_size + 3
+					b_img[y1:y2, x1:x2] = (0, 0, 0)
+					m_img[y1:y2, x1:x2] = 0
+				if (0 < g1) ^ (0 < g3):
+					y1 = 50 + (y + 1) * grid_size - 3
+					y2 = 50 + (y + 1) * grid_size + 3
+					x1 = x * grid_size - 3
+					x2 = (x + 1) * grid_size + 3
+					b_img[y1:y2, x1:x2] = (0, 0, 0)
+					m_img[y1:y2, x1:x2] = 0
+
+		# if g1 == 0 and g2 == 0 and g3 == 0 and 0 < g4:
+		# 	y1 = 53 + (y + 1) * grid_size - 3
+		# 	y2 = 53 + (y + 1) * grid_size + 3
+		# 	x1 = (x + 1) * grid_size - 3
+		# 	x2 = (x + 1) * grid_size + 3
+		# 	b_img[y1:y2, x1:x2] = (0, 0, 0)
+		# 	m_img[y1:y2, x1:x2] = MaskInfo.MaskLayer.WALL
+		return
 
 	def load_map(self, file_path: Path):
 		with open(file_path, 'r') as file:
-			map_height = self.map_height
-			map_width = self.map_width
-
 			data = json.load(file)
 			if "map_name" not in data:
 				raise KeyError(f"{Path}에 필수 키 \"map_name\"이(가) 존재하지 않습니다.")
@@ -74,93 +168,7 @@ class MapData:
 				self.map_theme = self.ThemeInfo(data["map_theme"])
 			if "matrix" not in data:
 				raise KeyError(f"{Path}에 필수 키 \"matrix\"이(가) 존재하지 않습니다.")
-			map_matrix = np.array(data["matrix"])
-			if map_matrix.shape != (self.map_height, self.map_width):
-				raise ValueError("맵 크기가 12x20이 아닙니다.")
-			padded_matrix = np.pad(map_matrix, ((1, 0), (1, 0)), mode='constant', constant_values=0)
-			b_img = self.background_image
-			m_img = self.mask_info.mask_image
-			b_img[:53, :] = self.map_theme.letterbox_color
-			m_img[:53, :] = MaskInfo.MaskLayer.LETTERBOX
-			b_img[53:-53, :] = self.map_theme.background_color
-			m_img[53:-53, :] = MaskInfo.MaskLayer.WALL
-			b_img[-53:, :] = self.map_theme.letterbox_color
-			m_img[-53:, :] = MaskInfo.MaskLayer.LETTERBOX
-			grid_size = 50
-			# shift = 10
-
-			# 체크포인트 지역 분할
-			checkpoint_id_grid = self._checkpoint_id_grid
-			next_checkpoint_id = 0
-			def checkpoint_bfs(i, j):
-				# if self._checkpoint_grid[i, j] == 0:
-				if padded_matrix[i, j] != 2:
-					return
-				queue = deque([(i, j)])
-				while queue:
-					x, y = queue.popleft()
-					if checkpoint_id_grid[x, y] != 0:
-						continue
-					checkpoint_id_grid[x, y] = next_checkpoint_id
-					for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-						nx, ny = x + dx, y + dy
-						if padded_matrix[nx][ny] == 2:
-							queue.append((nx, ny))
-			for y in range(1, map_height + 1):
-				for x in range(1, map_width + 1):
-					if padded_matrix[y][x] == 2 and checkpoint_id_grid[y][x] == 0:
-						next_checkpoint_id += 1
-						checkpoint_bfs(y, x)
-			self._checkpoint_count = next_checkpoint_id
-
-			# 바닥 타일 배치 & 체크포인트 지역 타일 배치
-			checkpoint_id_mask = self._checkpoint_id_mask
-			for y in range(1, map_height + 1):
-				for x in range(1, map_width + 1):
-					if padded_matrix[y][x] == 0:
-						continue
-					y1 = 50 + y * grid_size
-					x1 = x * grid_size
-					if padded_matrix[y][x] == 1:
-						tile_color = self.map_theme.floor_tile_color_list[(x + y) % 2]
-						b_img[y1:y1 + grid_size, x1:x1 + grid_size] = tile_color
-						m_img[y1:y1 + grid_size, x1:x1 + grid_size] = 0
-					elif padded_matrix[y][x] == 2:
-						tile_color = self.map_theme.checkpoint_zone_color
-						b_img[y1:y1 + grid_size, x1:x1 + grid_size] = tile_color
-						m_img[y1:y1 + grid_size, x1:x1 + grid_size] = MaskInfo.MaskLayer.CHECKPOINT_ZONE
-						checkpoint_id_mask[y1:y1 + grid_size, x1:x1 + grid_size] = checkpoint_id_grid[y][x]
-					else:
-						raise ValueError(f"알 수 없는 타일 값: {padded_matrix[y][x]}")
-
-			# 벽(경계) 추가
-			for y in range(0, map_height):
-				for x in range(0, map_width):
-					g1 = padded_matrix[y][x]
-					g2 = padded_matrix[y][x + 1]
-					g3 = padded_matrix[y + 1][x]
-					g4 = padded_matrix[y + 1][x + 1]
-					if (0 < g1) ^ (0 < g2):
-						y1 = 50 + y * grid_size - 3
-						y2 = 50 + (y + 1) * grid_size + 3
-						x1 = (x + 1) * grid_size - 3
-						x2 = (x + 1) * grid_size + 3
-						b_img[y1:y2, x1:x2] = (0, 0, 0)
-						m_img[y1:y2, x1:x2] = 0
-					if (0 < g1) ^ (0 < g3):
-						y1 = 50 + (y + 1) * grid_size - 3
-						y2 = 50 + (y + 1) * grid_size + 3
-						x1 = x * grid_size - 3
-						x2 = (x + 1) * grid_size + 3
-						b_img[y1:y2, x1:x2] = (0, 0, 0)
-						m_img[y1:y2, x1:x2] = 0
-				# if g1 == 0 and g2 == 0 and g3 == 0 and 0 < g4:
-				# 	y1 = 53 + (y + 1) * grid_size - 3
-				# 	y2 = 53 + (y + 1) * grid_size + 3
-				# 	x1 = (x + 1) * grid_size - 3
-				# 	x2 = (x + 1) * grid_size + 3
-				# 	b_img[y1:y2, x1:x2] = (0, 0, 0)
-				# 	m_img[y1:y2, x1:x2] = MaskInfo.MaskLayer.WALL
+			self.draw_background(data)
 
 			if "player_info" in data:
 				self.player_info = data["player_info"]
