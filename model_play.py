@@ -14,7 +14,7 @@ from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecFrameStack
 
-from stage_map.env import Environment, SingleAgentWrapper
+from stage_map.env import Environment, SingleEnvironment
 from model.model6 import CNNPolicy
 from model.model7 import ResNetPolicy
 
@@ -72,7 +72,8 @@ class EnvironmentVisualizer(QMainWindow):
 		# 	player_num=self.player_num,
 		# 	fps=self.fps
 		# )
-		self.env = SingleAgentWrapper(
+		self.env = SingleEnvironment(
+			name="model_play",
 			map_path=Path(__file__).parent / "stage_map/stage/stage0/map1.json",
 			fps=self.fps
 		)
