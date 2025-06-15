@@ -405,7 +405,7 @@ class SingleEnvironment(gym.Env):
 	def step(self, action):
 		"""환경 한 스텝 진행"""
 		# 액션을 배열로 변환 (단일 플레이어이므로 크기 1)
-		actions = np.array(action)
+		actions = np.array([action])
 
 		obs, rewards, terminated, truncated, infos = self.env.step(actions)
 
