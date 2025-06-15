@@ -24,5 +24,6 @@ class CNNPolicy(nn.Module):
 		)
 
 	def forward(self, x):
+		x = x / 255.0
 		feat = self.features(x)
 		return self.actor(feat), self.critic(feat).squeeze(-1)

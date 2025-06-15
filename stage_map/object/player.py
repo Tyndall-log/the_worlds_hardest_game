@@ -8,15 +8,19 @@ class Player(Object):
 	size = (36, 36)
 	die_reward = -1
 	wall_reward = -0.02
+	wall_die = True
 	# move_reward = -0.0005
 	move_reward = -0.0
 	checkpoint_reward = 1
 	coin_reward = 3
-	coin_smell_reward = 0.002
+	# coin_smell_reward = 0.002
+	coin_smell_reward = 0.0
 	# ball_smell_reward = -0.1
 	goal_reward = 5
-	change_action_penalty = -0.001
-	step_penalty = -0.0005  # 최종 보상에 적용되는 패널티
+	# change_action_penalty = -0.001
+	change_action_penalty = 0
+	# step_penalty = -0.0005  # 최종 보상에 적용되는 패널티
+	step_penalty = 0  # 최종 보상에 적용되는 패널티
 	# stop_penalty = -0.05
 	# env_end_penalty = -100
 
@@ -133,18 +137,26 @@ class Player(Object):
 		# 지속 정지 패널티
 
 		# 이동 벽 검사
+		wall_flag = False
 		if dy < 0 and (mask[y1+dy, a_x-1:a_x+1] & MaskInfo.MaskLayer.WALL).any():  # 위쪽
 			dy = 0
-			self._reward += self.wall_reward
+			wall_flag = True
 		if 0 < dy and (mask[y1 + h + dy, a_x - 1:a_x + 1] & MaskInfo.MaskLayer.WALL).any():  # 아래쪽
 			dy = 0
-			self._reward += self.wall_reward
+			wall_flag = True
 		if dx < 0 and (mask[a_y-1:a_y+1, x1+dx] & MaskInfo.MaskLayer.WALL).any():  # 왼쪽
 			dx = 0
-			self._reward += self.wall_reward
+			wall_flag = True
 		if 0 < dx and (mask[a_y - 1:a_y + 1, x1 + w + dx] & MaskInfo.MaskLayer.WALL).any():  # 오른쪽
 			dx = 0
-			self._reward += self.wall_reward
+			wall_flag = True
+		if wall_flag:
+			if self.wall_die:
+				self.is_dead = True
+				self._reward += self.die_reward
+				print(f"env: {env_data.name}, Player {self.player_id} is wall die")
+			else:
+				self._reward += self.wall_reward
 
 		# 제자리 벽 검사
 		# 위쪽
@@ -177,9 +189,18 @@ class Player(Object):
 			name = env_data.name
 			if env_data.checkpoint_count - 1 <= len(self.checkpoint_id_set):  # 마지막 체크포인트일 경우
 				if len(self.coin_id_set) == env_data.coin_count:  # 코인을 모두 획득한 경우
-					self._reward += max(self.goal_reward + self.step_penalty * self.step_count, 10)
+					self._reward += max(self.goal_reward + self.step_penalty * self.step_count, self.goal_reward // 10)
 					self.is_goal = True
-					print(f"env: {name}, Player {self.player_id} reached the final checkpoint at step {self.step_count}.")
+				else:  # 코인을 덜 획득한 경우
+					self._reward += (
+						self.goal_reward * (len(self.coin_id_set) / env_data.coin_count)
+						+ self.step_penalty * self.step_count
+					)
+					self.is_goal = True
+				print(
+					f"env: {name}, Player {self.player_id} reached the final checkpoint at step {self.step_count}."
+					f"({len(self.coin_id_set)} / {env_data.coin_count}, reward: {self._reward})"
+				)
 			else:  # 일반 체크포인트인 경우
 				if self.step_count == 0:  # 첫 번째 체크포인트는 보상 없음
 					self.checkpoint_id_set.add(checkpoint_id)
@@ -236,10 +257,11 @@ class Player(Object):
 		x2 = x1 + w
 		y2 = y1 + h
 		canvas[y1:y2, x1:x2] = (0, 0, 0)
-		if view_canvas is None:
+		if view_canvas is None and env_data.player_trail_canvas is not None:
 			roi = env_data.player_trail_canvas[self.player_id, y1:y2, x1:x2]
-			mask = roi < 255
-			roi[mask] += 32
+			# mask = roi < 255
+			# roi[mask] += 32
+			roi[...] = np.minimum(roi.astype(np.int16) + 32, 255).astype(np.uint8)
 		x1 += 6
 		y1 += 6
 		x2 -= 6

@@ -45,5 +45,6 @@ class ResNetPolicy(nn.Module):
 		)
 
 	def forward(self, x):
+		x = x / 255.0
 		feat = self.backbone(x)
 		return self.actor(feat), self.critic(feat).squeeze(-1)

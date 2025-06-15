@@ -93,6 +93,10 @@ if __name__ == "__main__":
 		action_space=action_space,
 		lr_schedule=lambda _: 1e-4,
 	)
+	device = torch.device("cuda" if torch.cuda.is_available() else (
+		"mps" if not torch.cuda.is_available() else "cpu"
+	))
+	policy.to(device)
 	model_path = root_path / "export_train/bc_actor_weights.pth"
 	if model_path.exists():
 		policy.load_state_dict(torch.load(model_path))
